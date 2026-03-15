@@ -1,7 +1,14 @@
+import com.vanniktech.maven.publish.JavadocJar
+import com.vanniktech.maven.publish.KotlinJvm
+import com.vanniktech.maven.publish.KotlinMultiplatform
 import com.vanniktech.maven.publish.MavenPublishBaseExtension
+import kotlinx.validation.ApiValidationExtension
+import kotlinx.validation.KotlinApiBuildTask
+import kotlinx.validation.KotlinApiCompareTask
 
 plugins {
   id("com.vanniktech.maven.publish.base")
+  id("binary-compatibility-validator")
 }
 
 configure<MavenPublishBaseExtension> {
@@ -29,4 +36,40 @@ configure<MavenPublishBaseExtension> {
       }
     }
   }
+
+  if (project.name == "okhttp") {
+    configure(KotlinMultiplatform(javadocJar = JavadocJar.Empty()))
+  } else if (plugins.hasPlugin(JavaBasePlugin::class.java)) {
+    configure(KotlinJvm(javadocJar = JavadocJar.Empty()))
+  }
+}
+
+configure<ApiValidationExtension> {
+  ignoredPackages += "okhttp3.logging.internal"
+  ignoredPackages += "mockwebserver3.internal"
+  ignoredPackages += "okhttp3.internal"
+  ignoredPackages += "mockwebserver3.junit5.internal"
+  ignoredPackages += "okhttp3.brotli.internal"
+  ignoredPackages += "okhttp3.sse.internal"
+  ignoredPackages += "okhttp3.tls.internal"
+}
+
+if (project.name == "okhttp") {
+  // Workaround for https://github.com/Kotlin/binary-compatibility-validator/issues/312
+  val apiBuild = tasks.register<KotlinApiBuildTask>("androidApiBuild") {
+    outputApiFile = project.layout.buildDirectory.file("${this.name}/okhttp.api")
+    inputClassesDirs.from(tasks.getByName("compileAndroidMain").outputs)
+  }
+  val apiCheck = tasks.register<KotlinApiCompareTask>("androidApiCheck") {
+    group = "verification"
+    projectApiFile = project.file("api/android/okhttp.api")
+    generatedApiFile = apiBuild.flatMap(KotlinApiBuildTask::outputApiFile)
+  }
+  val apiDump = tasks.register<Copy>("androidApiDump") {
+    from(apiBuild.flatMap(KotlinApiBuildTask::outputApiFile))
+    destinationDir = project.file("api/android")
+  }
+
+  tasks.named("apiDump").configure { dependsOn(apiDump) }
+  tasks.named("apiCheck").configure { dependsOn(apiCheck) }
 }
